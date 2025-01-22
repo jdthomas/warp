@@ -19,6 +19,7 @@ use crate::transport::Transport;
 
 /// Represents errors that can occur building the TlsConfig
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) enum TlsConfigError {
     Io(io::Error),
     /// An Error parsing the Certificate
@@ -171,40 +172,16 @@ impl TlsConfigBuilder {
         self
     }
 
-    pub(crate) fn build(mut self) -> Result<ServerConfig, TlsConfigError> {
+    pub(crate) fn build(self) -> Result<ServerConfig, TlsConfigError> {
         let mut cert_rdr = BufReader::new(self.cert);
         let cert = rustls_pemfile::certs(&mut cert_rdr)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_e| TlsConfigError::CertParseError)?;
 
-        let mut key_vec = Vec::new();
-        self.key
-            .read_to_end(&mut key_vec)
-            .map_err(TlsConfigError::Io)?;
-
-        if key_vec.is_empty() {
-            return Err(TlsConfigError::EmptyKey);
-        }
-
-        let mut key_opt = None;
-        let mut key_cur = std::io::Cursor::new(key_vec);
-        for item in rustls_pemfile::read_all(&mut key_cur)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_e| TlsConfigError::InvalidIdentityPem)?
-        {
-            match item {
-                rustls_pemfile::Item::Pkcs1Key(k) => key_opt = Some(k.into()),
-                rustls_pemfile::Item::Pkcs8Key(k) => key_opt = Some(k.into()),
-                rustls_pemfile::Item::Sec1Key(k) => key_opt = Some(k.into()),
-                // Ignore certs in the same pem file as private key
-                rustls_pemfile::Item::X509Certificate(_) => {}
-                _ => return Err(TlsConfigError::UnknownPrivateKeyFormat),
-            }
-        }
-        let key = match key_opt {
-            Some(v) => v,
-            _ => return Err(TlsConfigError::MissingPrivateKey),
-        };
+        let mut key_rdr = BufReader::new(self.key);
+        let key = rustls_pemfile::private_key(&mut key_rdr)
+            .map_err(TlsConfigError::Io)?
+            .ok_or(TlsConfigError::MissingPrivateKey)?;
 
         fn read_trust_anchor(
             trust_anchor: Box<dyn Read + Send + Sync>,
